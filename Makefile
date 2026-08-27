@@ -6,10 +6,12 @@ build:
 
 install: build
 	rm -rf $(DEST)
-	mkdir -p $(DEST)/Contents/MacOS
+	mkdir -p $(DEST)/Contents/MacOS $(DEST)/Contents/Resources
 	cp .build/release/$(APP) $(DEST)/Contents/MacOS/$(APP)
 	cp Info.plist $(DEST)/Contents/Info.plist
+	cp Icon/AppIcon.icns $(DEST)/Contents/Resources/AppIcon.icns
 	codesign --force -s - $(DEST)
+	touch $(DEST)
 	open $(DEST)
 
 uninstall:

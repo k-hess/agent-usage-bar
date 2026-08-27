@@ -4,6 +4,11 @@ import ServiceManagement
 
 // MARK: - API types
 
+// The usage endpoint returns two generations of the same data. `limits` is the
+// current shape: one entry per limit the plan actually has, including
+// model-scoped weekly limits the old fixed fields can't express. The top-level
+// `five_hour`/`seven_day*` buckets are the legacy shape, kept as a fallback.
+
 struct Bucket: Decodable {
     let utilization: Double?
     let resetsAt: String?
@@ -14,30 +19,129 @@ struct Bucket: Decodable {
     }
 }
 
+struct Scope: Decodable {
+    struct Named: Decodable {
+        let displayName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case displayName = "display_name"
+        }
+    }
+
+    let model: Named?
+    let surface: Named?
+
+    var label: String? {
+        model?.displayName ?? surface?.displayName
+    }
+}
+
+struct Limit: Decodable {
+    let kind: String
+    let group: String?
+    let percent: Double?
+    let severity: String?
+    let resetsAt: String?
+    let scope: Scope?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, group, percent, severity, scope
+        case resetsAt = "resets_at"
+    }
+
+    var label: String {
+        switch kind {
+        case "session": return "Session (5h)"
+        case "weekly_all": return "Week (all)"
+        case "weekly_scoped": return "Week (\(scope?.label ?? "scoped"))"
+        default:
+            // Future kinds render readably instead of vanishing.
+            let pretty = kind.replacingOccurrences(of: "_", with: " ").capitalized
+            if let s = scope?.label { return "\(pretty) (\(s))" }
+            return pretty
+        }
+    }
+}
+
+struct Money: Decodable {
+    let amountMinor: Double?
+    let currency: String?
+    let exponent: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case amountMinor = "amount_minor"
+        case currency, exponent
+    }
+
+    var formatted: String? {
+        guard let amountMinor else { return nil }
+        let value = amountMinor / pow(10, Double(exponent ?? 2))
+        let fmt = NumberFormatter()
+        fmt.numberStyle = .currency
+        fmt.currencyCode = currency ?? "USD"
+        return fmt.string(from: NSNumber(value: value))
+    }
+}
+
+struct Spend: Decodable {
+    let used: Money?
+    let limit: Money?
+    let percent: Double?
+    let severity: String?
+    let enabled: Bool?
+}
+
 struct Usage: Decodable {
+    let limits: [Limit]?
+    let spend: Spend?
+
+    // Legacy fields.
     let fiveHour: Bucket?
     let sevenDay: Bucket?
     let sevenDayOpus: Bucket?
     let sevenDaySonnet: Bucket?
 
     enum CodingKeys: String, CodingKey {
+        case limits, spend
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case sevenDayOpus = "seven_day_opus"
         case sevenDaySonnet = "seven_day_sonnet"
     }
 
-    var buckets: [(label: String, bucket: Bucket)] {
-        let all: [(String, Bucket?)] = [
+    struct Row {
+        let label: String
+        let percent: Double
+        let severity: String?
+        let resetsAt: String?
+    }
+
+    var rows: [Row] {
+        if let limits, !limits.isEmpty {
+            return limits.compactMap { l in
+                guard let pct = l.percent else { return nil }
+                return Row(label: l.label, percent: pct, severity: l.severity, resetsAt: l.resetsAt)
+            }
+        }
+        let legacy: [(String, Bucket?)] = [
             ("Session (5h)", fiveHour),
             ("Week (all)", sevenDay),
             ("Week (Opus)", sevenDayOpus),
             ("Week (Sonnet)", sevenDaySonnet),
         ]
-        return all.compactMap { label, b in
-            guard let b, b.utilization != nil else { return nil }
-            return (label, b)
+        return legacy.compactMap { label, b in
+            guard let b, let pct = b.utilization else { return nil }
+            return Row(label: label, percent: pct, severity: nil, resetsAt: b.resetsAt)
         }
+    }
+
+    var spendRow: String? {
+        guard let spend, spend.enabled == true, let pct = spend.percent else { return nil }
+        var text = "Extra usage:  \(Int(pct.rounded()))%"
+        if let used = spend.used?.formatted, let limit = spend.limit?.formatted {
+            text += "  ·  \(used) of \(limit)"
+        }
+        return text
     }
 }
 
@@ -196,36 +300,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateTitle() {
-        guard let maxUtil = usage?.buckets.compactMap({ $0.bucket.utilization }).max() else {
+        guard let usage, let worst = usage.rows.max(by: { $0.percent < $1.percent }) else {
             statusItem.button?.title = "CC –"
             return
         }
-        let pct = Int(maxUtil.rounded())
-        statusItem.button?.title = pct >= 80 ? "CC ⚠️ \(pct)%" : "CC \(pct)%"
+        let pct = Int(worst.percent.rounded())
+        // The API flags severity itself; 80% is the backstop for responses that
+        // don't carry one (the legacy fields never do).
+        let flagged = usage.rows.contains { ($0.severity ?? "normal") != "normal" } || pct >= 80
+        statusItem.button?.title = flagged ? "CC ⚠️ \(pct)%" : "CC \(pct)%"
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
 
+        func addInfo(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+
         if let usage {
-            for (label, bucket) in usage.buckets {
-                let pct = Int((bucket.utilization ?? 0).rounded())
-                let item = NSMenuItem(title: "\(label):  \(pct)%\(resetText(bucket.resetsAt))", action: nil, keyEquivalent: "")
-                item.isEnabled = false
-                menu.addItem(item)
+            for row in usage.rows {
+                let pct = Int(row.percent.rounded())
+                addInfo("\(row.label):  \(pct)%\(resetText(row.resetsAt))")
+            }
+            if let spendRow = usage.spendRow {
+                menu.addItem(.separator())
+                addInfo(spendRow)
             }
         }
 
         if let lastError {
-            let item = NSMenuItem(title: "\(lastError)", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+            addInfo("\(lastError)")
             if let lastFetch {
                 let fmt = DateFormatter()
                 fmt.timeStyle = .short
-                let stale = NSMenuItem(title: "Showing data from \(fmt.string(from: lastFetch))", action: nil, keyEquivalent: "")
-                stale.isEnabled = false
-                menu.addItem(stale)
+                addInfo("Showing data from \(fmt.string(from: lastFetch))")
             }
         }
 
