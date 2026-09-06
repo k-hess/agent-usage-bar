@@ -1,10 +1,12 @@
-APP = ClaudeUsageBar
+APP = AgentUsageBar
 DEST = /Applications/$(APP).app
 
 build:
 	swift build -c release
 
 install: build
+	osascript -e 'quit app "ClaudeUsageBar"' 2>/dev/null || true
+	rm -rf /Applications/ClaudeUsageBar.app
 	rm -rf $(DEST)
 	mkdir -p $(DEST)/Contents/MacOS $(DEST)/Contents/Resources
 	cp .build/release/$(APP) $(DEST)/Contents/MacOS/$(APP)
