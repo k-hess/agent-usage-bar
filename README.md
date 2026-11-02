@@ -11,7 +11,7 @@ The bar shows one number per agent (`CC 34%  CX 19%`): whichever of that agent's
 Claude Code has two modes. Switch between them with **Use cswap** in the dropdown, next to **Launch at login**. The choice is saved. If you haven't made one, the app uses cswap when it's installed.
 
 - **Standard** reads your one logged-in account. The bar shows `CC 34%`.
-- **cswap** reads every account that [claude-swap](https://github.com/realiti4/claude-swap) manages. The bar shows the active account's worst limit with its name, like `CC personal 44%`. The name is the account's alias, or its email domain if it has none.
+- **cswap** reads every account that [claude-swap](https://github.com/realiti4/claude-swap) manages. The bar shows the active account's worst limit with its name, like `CC KH 44%`. The name is the account's alias in capitals, or its email domain if it has none.
 
 In cswap mode the dropdown lists each account with its limits beneath it. The active account has a checkmark. Click another account to switch to it, or pick **Switch to most quota left** when there are two or more. A switch moves every running Claude Code session on the Mac within about 30 seconds. If cswap can't switch, the reason shows in the dropdown until the next good read.
 

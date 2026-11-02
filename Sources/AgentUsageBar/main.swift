@@ -616,7 +616,8 @@ final class CswapProvider: Provider {
             notes.append(expires < Date() ? "Login expired" : "Login expires \(resetText(expires))")
         }
         let email = e.email ?? ""
-        let label = [e.alias, email.split(separator: "@").last.map(String.init), e.email]
+        // cswap lowercases aliases; they read better as tags in capitals.
+        let label = [e.alias?.uppercased(), email.split(separator: "@").last.map(String.init), e.email]
             .compactMap { $0 }.first { !$0.isEmpty } ?? "Account \(number)"
         return Account(number: number, label: label, active: e.active ?? (number == activeNumber),
                        lines: lines, notes: notes)
