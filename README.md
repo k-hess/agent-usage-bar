@@ -6,6 +6,17 @@ A tiny macOS menu bar app that shows your Claude Code and Codex usage limits —
 
 The bar shows one number per agent (`CC 34%  CX 19%`): whichever of that agent's limits is closest to capping you. It shows a ⚠️ when the API flags a limit as elevated, or at 80%+ as a backstop. An agent you aren't logged into shows `–` with the reason in the dropdown.
 
+## Claude modes
+
+Claude Code has two modes. Switch between them with **Use cswap** in the dropdown, next to **Launch at login**. The choice is saved. If you haven't made one, the app uses cswap when it's installed.
+
+- **Standard** reads your one logged-in account. The bar shows `CC 34%`.
+- **cswap** reads every account that [claude-swap](https://github.com/realiti4/claude-swap) manages. The bar shows the active account's worst limit with its name, like `CC personal 44%`. The name is the account's alias, or its email domain if it has none.
+
+In cswap mode the dropdown lists each account with its limits beneath it. The active account has a checkmark. Click another account to switch to it, or pick **Switch to most quota left** when there are two or more. A switch moves every running Claude Code session on the Mac within about 30 seconds. If cswap can't switch, the reason shows in the dropdown until the next good read.
+
+The app never falls back to standard mode on its own. If cswap is missing or fails, the bar shows `CC –` and the dropdown says why. **Use cswap** stays enabled so you can turn it off.
+
 ## Install
 
 Requires macOS 13+, Xcode Command Line Tools (`xcode-select --install`), and a logged-in [Claude Code](https://claude.com/claude-code) and/or [Codex CLI](https://github.com/openai/codex).
@@ -22,7 +33,7 @@ Turn on **Launch at login** from the dropdown if you want it to survive reboots.
 
 ## How it works
 
-### Claude Code
+### Claude Code (standard mode)
 
 - Reads the OAuth token Claude Code already stores in your macOS Keychain, via Apple's `/usr/bin/security` tool — the same path Claude Code uses. (The Keychain item's partition list only trusts Apple-signed tools, so an ad-hoc-signed app reading it directly triggers a keychain password prompt on every poll; going through `security` avoids that.) No separate login, no API key to configure.
 - Calls `GET https://api.anthropic.com/api/oauth/usage` — the endpoint behind `/usage` — every 5 minutes, plus on demand via **Refresh now**.
@@ -30,6 +41,16 @@ Turn on **Launch at login** from the dropdown if you want it to survive reboots.
 - Shows your extra-usage credit spend (percent, plus dollars used of your monthly limit) when credits are enabled.
 
 If the token expires (401), the bar shows `CC –` with "Token stale — open Claude Code to refresh" in the dropdown. Claude Code rotates the token whenever it runs, so it self-heals the next time you use it.
+
+### Claude Code (cswap mode)
+
+- Runs `cswap list --json` and reads the output. It looks for `cswap` in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+- Reads every 60 seconds, plus on demand via **Refresh now**. It never starts a second read while one is running, and it stops a read that takes longer than 20 seconds.
+- cswap does the fetching. The app reads no token, touches no Keychain item and makes no network call for Claude in this mode.
+- Shows each account's session, weekly and model-scoped limits, and extra usage when it's on. If an account has no live numbers, it shows the last good ones with the reason, such as a stale token or an expired login. It also warns when an account's login expires within 3 days.
+- Switching runs `cswap switch`, and only when you click.
+
+Codex and standard mode keep their 5-minute cycle.
 
 ### Codex
 
@@ -43,8 +64,10 @@ If the token expires, the bar shows `CX –` with "Token stale — run codex to 
 
 Worth being explicit, since this app touches your Claude and ChatGPT credentials:
 
-- The Claude token is read from the Keychain into memory (via a `/usr/bin/security` subprocess, output captured over a pipe) and sent to exactly one place: `api.anthropic.com`. The Codex token is read from `~/.codex/auth.json` into memory and sent to exactly one place: `chatgpt.com`. Both over HTTPS, in the `Authorization` header.
+- In standard mode the Claude token is read from the Keychain into memory (via a `/usr/bin/security` subprocess, output captured over a pipe) and sent to exactly one place: `api.anthropic.com`. The Codex token is read from `~/.codex/auth.json` into memory and sent to exactly one place: `chatgpt.com`. Both over HTTPS, in the `Authorization` header.
 - Neither is ever logged, written to disk, or placed in a URL.
+- In cswap mode the app runs a local `cswap` binary and reads its JSON output. It reads no Claude token and makes no network call for Claude. cswap handles the credentials and the usage requests itself, so trust it as you would any tool that holds your Claude login.
+- The only other thing the app writes is your mode choice, in its own preferences.
 - There is no telemetry, no analytics, and no other network call. The whole app is one Swift file — [read it](Sources/AgentUsageBar/main.swift).
 
 ## Icon
