@@ -755,17 +755,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var claudeState: ProviderState { useCswap ? cswap : claude }
     private var states: [ProviderState] { [claudeState, codex] }
 
+    // Where each agent shows is saved per agent and defaults to on. An agent shown
+    // nowhere isn't polled at all.
+    private static let barPlace = "showInBar"
+    private static let dropdownPlace = "showInDropdown"
+
+    private func isShown(_ state: ProviderState, in place: String) -> Bool {
+        UserDefaults.standard.object(forKey: "\(place).\(state.provider.code)") as? Bool ?? true
+    }
+    private var barStates: [ProviderState] { states.filter { isShown($0, in: Self.barPlace) } }
+    private var dropdownStates: [ProviderState] { states.filter { isShown($0, in: Self.dropdownPlace) } }
+    private func isPolled(_ state: ProviderState) -> Bool {
+        isShown(state, in: Self.barPlace) || isShown(state, in: Self.dropdownPlace)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = states.map { "\($0.provider.code) …" }.joined(separator: "  ")
+        statusItem.button?.title = barStates.map { "\($0.provider.code) …" }.joined(separator: "  ")
         rebuildMenu()
         refreshAll()
         // Codex and standard Claude poll every 5 minutes; cswap mode adds a
         // 60-second read of cswap only.
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.fetch(self.codex)
-            if !self.useCswap { self.fetch(self.claude) }
+            for state in self.states where state !== self.cswap && self.isPolled(state) { self.fetch(state) }
         }
         timer?.tolerance = 30
         scheduleCswapTimer()
@@ -776,14 +789,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cswapTimer = nil
         guard useCswap else { return }
         cswapTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.isPolled(self.cswap) else { return }
             self.fetch(self.cswap)
         }
         cswapTimer?.tolerance = 5
     }
 
     @objc func refreshAll() {
-        states.forEach { fetch($0) }
+        states.filter(isPolled).forEach { fetch($0) }
     }
 
     // `force` is for the read right after a switch: it never clears the switch
@@ -820,7 +833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateTitle() {
-        statusItem.button?.title = states.map(\.title).joined(separator: "  ")
+        statusItem.button?.title = barStates.map(\.title).joined(separator: "  ")
     }
 
     // MARK: Menu
@@ -842,7 +855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
-        let cols = Columns(states.flatMap { $0.snapshot?.lines ?? [] })
+        let cols = Columns(dropdownStates.flatMap { $0.snapshot?.lines ?? [] })
         let smallFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
 
         @discardableResult
@@ -865,7 +878,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
 
-        for (i, state) in states.enumerated() {
+        for (i, state) in dropdownStates.enumerated() {
             if i > 0 { menu.addItem(.separator()) }
             addText(state.provider.name, font: .boldSystemFont(ofSize: NSFont.systemFontSize))
             if let snap = state.snapshot {
@@ -909,7 +922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        menu.addItem(.separator())
+        if !dropdownStates.isEmpty { menu.addItem(.separator()) }
 
         let refreshItem = NSMenuItem(title: "Refresh now", action: #selector(refreshAll), keyEquivalent: "r")
         refreshItem.target = self
@@ -927,6 +940,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cswapItem.isEnabled = useCswap || cswapPath != nil
         menu.addItem(cswapItem)
 
+        menu.addItem(showMenuItem("Show in menu bar", place: Self.barPlace))
+        menu.addItem(showMenuItem("Show in dropdown", place: Self.dropdownPlace))
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -935,12 +951,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
     }
 
+    // The bar must keep one agent: with an empty title the status item, and the
+    // only way back to this menu, disappears.
+    private func showMenuItem(_ title: String, place: String) -> NSMenuItem {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        for state in states {
+            let item = NSMenuItem(title: state.provider.name, action: #selector(toggleShown(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = "\(place).\(state.provider.code)"
+            let shown = isShown(state, in: place)
+            item.state = shown ? .on : .off
+            item.isEnabled = !(place == Self.barPlace && shown && barStates.count == 1)
+            submenu.addItem(item)
+        }
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        return parent
+    }
+
+    @objc func toggleShown(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        let turningOn = sender.state != .on
+        UserDefaults.standard.set(turningOn, forKey: key)
+        updateTitle()
+        rebuildMenu()
+        // It may have gone unpolled while hidden, so don't wait for the next cycle.
+        if turningOn, let state = states.first(where: { key.hasSuffix(".\($0.provider.code)") }) {
+            fetch(state)
+        }
+    }
+
     @objc func toggleCswap() {
         useCswap.toggle()
         scheduleCswapTimer()
         updateTitle()
         rebuildMenu()
-        fetch(claudeState)
+        if isPolled(claudeState) { fetch(claudeState) }
     }
 
     @objc func switchAccount(_ sender: NSMenuItem) {

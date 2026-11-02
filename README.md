@@ -17,6 +17,10 @@ In cswap mode the dropdown lists each account with its limits beneath it. The ac
 
 The app never falls back to standard mode on its own. If cswap is missing or fails, the bar shows `CC –` and the dropdown says why. **Use cswap** stays enabled so you can turn it off.
 
+## Choosing what shows
+
+**Show in menu bar** and **Show in dropdown** each list Claude Code and Codex, so you can, say, keep Codex in the dropdown but off the bar. The choices are saved. The bar always keeps at least one agent, because an empty title would hide the app and the menu with it. An agent you turn off in both isn't polled at all.
+
 ## Install
 
 Requires macOS 13+, Xcode Command Line Tools (`xcode-select --install`), and a logged-in [Claude Code](https://claude.com/claude-code) and/or [Codex CLI](https://github.com/openai/codex).
@@ -67,7 +71,7 @@ Worth being explicit, since this app touches your Claude and ChatGPT credentials
 - In standard mode the Claude token is read from the Keychain into memory (via a `/usr/bin/security` subprocess, output captured over a pipe) and sent to exactly one place: `api.anthropic.com`. The Codex token is read from `~/.codex/auth.json` into memory and sent to exactly one place: `chatgpt.com`. Both over HTTPS, in the `Authorization` header.
 - Neither is ever logged, written to disk, or placed in a URL.
 - In cswap mode the app runs a local `cswap` binary and reads its JSON output. It reads no Claude token and makes no network call for Claude. cswap handles the credentials and the usage requests itself, so trust it as you would any tool that holds your Claude login.
-- The only other thing the app writes is your mode choice, in its own preferences.
+- The only other things the app writes are your mode and display choices, in its own preferences.
 - There is no telemetry, no analytics, and no other network call. The whole app is one Swift file — [read it](Sources/AgentUsageBar/main.swift).
 
 ## Icon
