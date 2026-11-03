@@ -8,18 +8,18 @@ The bar shows one number per agent (`CC 34%  CX 19%`): whichever of that agent's
 
 ## Claude modes
 
-Claude Code has two modes. Switch between them with **Use cswap** in the dropdown, next to **Launch at login**. The choice is saved. If you haven't made one, the app uses cswap when it's installed.
+Claude Code has two modes. Switch between them with **Use cswap** under **Settings**. The choice is saved. If you haven't made one, the app uses cswap when it's installed.
 
 - **Standard** reads your one logged-in account. The bar shows `CC 34%`.
 - **cswap** reads every account that [claude-swap](https://github.com/realiti4/claude-swap) manages. The bar shows the active account's worst limit with its name, like `CC KH 44%`. The name is the account's alias in capitals, or its email domain if it has none.
 
-In cswap mode the dropdown lists each account with its limits beneath it. The active account has a checkmark. Click another account to switch to it, or pick **Switch to most quota left** when there are two or more. A switch moves every running Claude Code session on the Mac within about 30 seconds. If cswap can't switch, the reason shows in the dropdown until the next good read.
+In cswap mode the dropdown lists each account with its limits beneath it. The active account has a checkmark. Click another account to switch to it, or pick **Switch to most quota left** when there are three or more. A switch moves every running Claude Code session on the Mac within about 30 seconds, which the tooltip on those items repeats. If cswap can't switch, the reason shows in the dropdown until the next good read.
 
 The app never falls back to standard mode on its own. If cswap is missing or fails, the bar shows `CC –` and the dropdown says why. **Use cswap** stays enabled so you can turn it off.
 
 ## Choosing what shows
 
-**Show in menu bar** and **Show in dropdown** each list Claude Code and Codex, so you can, say, keep Codex in the dropdown but off the bar. The choices are saved. The bar always keeps at least one agent, because an empty title would hide the app and the menu with it. An agent you turn off in both isn't polled at all.
+**Settings** has a **Menu bar** and a **Dropdown** list, each with Claude Code and Codex, so you can, say, keep Codex in the dropdown but off the bar. The choices are saved. The bar always keeps at least one agent, because an empty title would hide the app and the menu with it. An agent you turn off in both isn't polled at all.
 
 ## Install
 
@@ -40,7 +40,7 @@ Turn on **Launch at login** from the dropdown if you want it to survive reboots.
 ### Claude Code (standard mode)
 
 - Reads the OAuth token Claude Code already stores in your macOS Keychain, via Apple's `/usr/bin/security` tool — the same path Claude Code uses. (The Keychain item's partition list only trusts Apple-signed tools, so an ad-hoc-signed app reading it directly triggers a keychain password prompt on every poll; going through `security` avoids that.) No separate login, no API key to configure.
-- Calls `GET https://api.anthropic.com/api/oauth/usage` — the endpoint behind `/usage` — every 5 minutes, plus on demand via **Refresh now**.
+- Calls `GET https://api.anthropic.com/api/oauth/usage` — the endpoint behind `/usage` — every 5 minutes, plus on demand via **Settings → Refresh now**.
 - Renders whichever limits your plan has, straight from the response's `limits` array — session 5h, weekly all-models, and any model-scoped weekly limit (it picks up the model's display name, so a new model shows up without a code change). Falls back to the legacy `five_hour`/`seven_day*` fields if `limits` is absent.
 - Shows your extra-usage credit spend (percent, plus dollars used of your monthly limit) when credits are enabled.
 
@@ -49,7 +49,7 @@ If the token expires (401), the bar shows `CC –` with "Token stale — open Cl
 ### Claude Code (cswap mode)
 
 - Runs `cswap list --json` and reads the output. It looks for `cswap` in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
-- Reads every 60 seconds, plus on demand via **Refresh now**. It never starts a second read while one is running, and it stops a read that takes longer than 20 seconds.
+- Reads every 60 seconds, plus on demand via **Settings → Refresh now**. It never starts a second read while one is running, and it stops a read that takes longer than 20 seconds.
 - cswap does the fetching. The app reads no token, touches no Keychain item and makes no network call for Claude in this mode.
 - Shows each account's session, weekly and model-scoped limits, and extra usage when it's on. If an account has no live numbers, it shows the last good ones with the reason, such as a stale token or an expired login. It also warns when an account's login expires within 3 days.
 - Switching runs `cswap switch`, and only when you click.

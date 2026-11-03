@@ -14,8 +14,11 @@ struct Row {
     let severity: String?
     let resetsAt: Date?
 
+    // Orange where the bar would flag this limit, red once it's used up.
     var line: Line {
-        Line(label: label, value: "\(Int(percent.rounded()))%", detail: resetText(resetsAt))
+        let elevated = percent >= 80 || (severity ?? "normal") != "normal"
+        return Line(label: label, value: "\(Int(percent.rounded()))%", detail: resetText(resetsAt),
+                    valueColor: percent >= 100 ? .systemRed : elevated ? .systemOrange : .labelColor)
     }
 }
 
@@ -24,6 +27,7 @@ struct Line {
     let label: String
     let value: String
     var detail = ""
+    var valueColor = NSColor.labelColor
 }
 
 // One Claude account in cswap mode: its lines plus any status notes beneath them.
@@ -707,8 +711,11 @@ func dataTitle(_ line: Line, _ cols: Columns) -> NSAttributedString {
     style.tabStops = [NSTextTab(textAlignment: .right, location: cols.value),
                       NSTextTab(textAlignment: .left, location: cols.detail)]
     let text = NSMutableAttributedString(
-        string: "\(line.label)\t\(line.value)",
+        string: "\(line.label)\t",
         attributes: [.font: dataFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
+    text.append(NSAttributedString(
+        string: line.value,
+        attributes: [.font: dataFont, .foregroundColor: line.valueColor, .paragraphStyle: style]))
     if !line.detail.isEmpty {
         text.append(NSAttributedString(
             string: "\t\(line.detail)",
@@ -759,6 +766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // nowhere isn't polled at all.
     private static let barPlace = "showInBar"
     private static let dropdownPlace = "showInDropdown"
+    private static let switchTip = "Switching moves all running sessions within ~30s"
 
     private func isShown(_ state: ProviderState, in place: String) -> Bool {
         UserDefaults.standard.object(forKey: "\(place).\(state.provider.code)") as? Bool ?? true
@@ -856,7 +864,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         let cols = Columns(dropdownStates.flatMap { $0.snapshot?.lines ?? [] })
-        let smallFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
 
         @discardableResult
         func addText(_ title: String, font: NSFont = .systemFont(ofSize: NSFont.systemFontSize),
@@ -890,6 +897,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     item.target = self
                     item.representedObject = account.number
                     item.isEnabled = !account.active && !switching
+                    item.toolTip = account.active ? nil : Self.switchTip
                     if account.active {
                         item.state = .on
                         item.attributedTitle = NSAttributedString(
@@ -901,13 +909,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     account.lines.forEach { addLine($0, indent: 1) }
                     account.notes.forEach { addText($0, color: .secondaryLabelColor, indent: 1) }
                 }
-                if snap.accounts.count >= 2 {
+                // With two accounts this could only ever pick the other one.
+                if snap.accounts.count >= 3 {
                     let best = NSMenuItem(title: "Switch to most quota left", action: #selector(switchBest), keyEquivalent: "")
                     best.target = self
                     best.isEnabled = !switching
+                    best.toolTip = Self.switchTip
                     menu.addItem(best)
-                    addText("Switching moves all running sessions within ~30s",
-                            font: smallFont, color: .secondaryLabelColor, indent: 1)
                 }
             }
             if state.provider is CswapProvider && switching { addText("Switching…", color: .secondaryLabelColor) }
@@ -923,6 +931,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if !dropdownStates.isEmpty { menu.addItem(.separator()) }
+
+        let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settings.submenu = settingsMenu()
+        menu.addItem(settings)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+    }
+
+    private func settingsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
 
         let refreshItem = NSMenuItem(title: "Refresh now", action: #selector(refreshAll), keyEquivalent: "r")
         refreshItem.target = self
@@ -940,22 +964,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cswapItem.isEnabled = useCswap || cswapPath != nil
         menu.addItem(cswapItem)
 
-        menu.addItem(showMenuItem("Show in menu bar", place: Self.barPlace))
-        menu.addItem(showMenuItem("Show in dropdown", place: Self.dropdownPlace))
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quitItem)
-
-        statusItem.menu = menu
+        addShowItems(to: menu, title: "Menu bar", place: Self.barPlace)
+        addShowItems(to: menu, title: "Dropdown", place: Self.dropdownPlace)
+        return menu
     }
 
     // The bar must keep one agent: with an empty title the status item, and the
     // only way back to this menu, disappears.
-    private func showMenuItem(_ title: String, place: String) -> NSMenuItem {
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
+    private func addShowItems(to menu: NSMenu, title: String, place: String) {
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        header.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize),
+                         .foregroundColor: NSColor.labelColor])
+        menu.addItem(header)
         for state in states {
             let item = NSMenuItem(title: state.provider.name, action: #selector(toggleShown(_:)), keyEquivalent: "")
             item.target = self
@@ -963,11 +987,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let shown = isShown(state, in: place)
             item.state = shown ? .on : .off
             item.isEnabled = !(place == Self.barPlace && shown && barStates.count == 1)
-            submenu.addItem(item)
+            menu.addItem(item)
         }
-        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        parent.submenu = submenu
-        return parent
     }
 
     @objc func toggleShown(_ sender: NSMenuItem) {
