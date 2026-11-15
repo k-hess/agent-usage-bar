@@ -21,6 +21,21 @@ The app never falls back to standard mode on its own. If cswap is missing or fai
 
 **Settings** has a **Menu bar** and a **Dropdown** list, each with Claude Code and Codex, so you can, say, keep Codex in the dropdown but off the bar. The choices are saved. The bar always keeps at least one agent, because an empty title would hide the app and the menu with it. An agent you turn off in both isn't polled at all.
 
+## Claude desktop windows
+
+If the Claude desktop app is in `/Applications` (or `~/Applications`), the dropdown gets a **Claude desktop** section. It runs extra copies of Claude, each signed in to a different account, side by side with your main Claude.
+
+- **New account window…** asks for a name, creates a folder for it and opens a Claude window on that folder. Sign in inside that window. You do this once; the sign-in stays in that folder.
+- Each window is a row with its state: `open` (with a checkmark), `not signed in`, or `sign-in expires <date>` when it's within 3 days. Click a row to open it, or bring it forward if it's already open. Hold Option to close it, Option+Shift to remove it. Remove asks first, refuses while the window is open, and moves the folder to the Trash.
+- When Claude updates itself, a side window quits to install and the updater only reopens the main Claude. While any window exists the app checks every 5 seconds and reopens the side windows that quit for an update, in the background. **Settings → Reopen windows after Claude updates** turns that off. **Settings → Claude desktop windows** hides the section.
+
+Things to know:
+
+- The app never touches your main Claude's sign-in or anything in `~/Library/Application Support/Claude`. The only thing it reads there is your language and theme setting, to start a new window the same way. Windows live in `~/Library/Application Support/AgentUsageBar/claude-desktop/`.
+- Claude in Chrome only pairs with the main Claude, not with these windows.
+- Don't use Claude's own Log out in a window. It ends the session on Claude's side. Nothing breaks, but that window needs a fresh sign-in.
+- The app reads only the names and expiry dates of the session cookies in each window's folder to show its state, never their values. It starts a window with `open -n -a Claude --args --user-data-dir=<folder>` and closes one by asking it to quit, never by force.
+
 ## Install
 
 Requires macOS 13+, Xcode Command Line Tools (`xcode-select --install`), and a logged-in [Claude Code](https://claude.com/claude-code) and/or [Codex CLI](https://github.com/openai/codex).
@@ -71,7 +86,7 @@ Worth being explicit, since this app touches your Claude and ChatGPT credentials
 - In standard mode the Claude token is read from the Keychain into memory (via a `/usr/bin/security` subprocess, output captured over a pipe) and sent to exactly one place: `api.anthropic.com`. The Codex token is read from `~/.codex/auth.json` into memory and sent to exactly one place: `chatgpt.com`. Both over HTTPS, in the `Authorization` header.
 - Neither is ever logged, written to disk, or placed in a URL.
 - In cswap mode the app runs a local `cswap` binary and reads its JSON output. It reads no Claude token and makes no network call for Claude. cswap handles the credentials and the usage requests itself, so trust it as you would any tool that holds your Claude login.
-- The only other things the app writes are your mode and display choices, in its own preferences.
+- The only other things the app writes are your mode and display choices, in its own preferences, and the Claude desktop window folders described above.
 - There is no telemetry, no analytics, and no other network call. The whole app is one Swift file — [read it](Sources/AgentUsageBar/main.swift).
 
 ## Icon

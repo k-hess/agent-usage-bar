@@ -5,6 +5,7 @@ build:
 	swift build -c release
 
 install: build
+	osascript -e 'quit app "$(APP)"' 2>/dev/null || true
 	osascript -e 'quit app "ClaudeUsageBar"' 2>/dev/null || true
 	rm -rf /Applications/ClaudeUsageBar.app
 	rm -rf $(DEST)
