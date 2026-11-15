@@ -747,12 +747,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
     private var cswapTimer: Timer?
+    private var desktopTimer: Timer?
     private let claude = ProviderState(ClaudeCode())
     private let cswap = ProviderState(CswapProvider())
     private let codex = ProviderState(Codex())
     private var menuOpen = false
     private var menuStale = false
     private var switching = false
+    private let desktop = ClaudeDesktop()
+
+    // Both default to on. The section also needs Claude.app to exist.
+    private var showDesktop: Bool {
+        get { UserDefaults.standard.object(forKey: "showClaudeDesktop") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "showClaudeDesktop") }
+    }
+    private var reopenAfterUpdates: Bool {
+        get { UserDefaults.standard.object(forKey: "reopenClaudeAfterUpdates") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "reopenClaudeAfterUpdates") }
+    }
+    private var desktopAvailable: Bool { showDesktop && ClaudeApp.url != nil }
 
     // Unset means on if cswap is installed. Never falls back to standard on its own.
     private var useCswap: Bool {
@@ -790,6 +803,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         timer?.tolerance = 30
         scheduleCswapTimer()
+        // Claude desktop windows: a process scan and a small sqlite read per profile.
+        desktopTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.desktopAvailable else { return }
+            self.desktop.refresh()
+        }
+        desktopTimer?.tolerance = 5
+        desktop.reopenAfterUpdates = { [weak self] in (self?.reopenAfterUpdates ?? false) && (self?.desktopAvailable ?? false) }
+        desktop.onChange = { [weak self] in self?.rebuildMenu() }
+        desktop.refresh()
     }
 
     private func scheduleCswapTimer() {
@@ -848,7 +870,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // A rebuild while the dropdown is open would replace it under the cursor, so
     // it waits for the close. The bar title still updates.
-    func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
+    func menuWillOpen(_ menu: NSMenu) {
+        menuOpen = true
+        if desktopAvailable { desktop.refresh() }
+    }
 
     func menuDidClose(_ menu: NSMenu) {
         menuOpen = false
@@ -932,6 +957,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if !dropdownStates.isEmpty { menu.addItem(.separator()) }
 
+        if desktopAvailable {
+            addDesktopSection(to: menu, addText: addText)
+            menu.addItem(.separator())
+        }
+
         let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
         settings.submenu = settingsMenu()
         menu.addItem(settings)
@@ -942,6 +972,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    // One row per extra Claude window. Click opens or brings it forward; hold
+    // Option to close it, Option+Shift to remove it.
+    private func addDesktopSection(
+        to menu: NSMenu,
+        addText: (String, NSFont, NSColor, Int) -> NSMenuItem
+    ) {
+        _ = addText("Claude desktop", .boldSystemFont(ofSize: NSFont.systemFontSize), .labelColor, 0)
+        for row in desktop.rows {
+            let title = row.status.map { "\(row.profile.name) — \($0)" } ?? row.profile.name
+            let item = NSMenuItem(title: title, action: #selector(openDesktop(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = row.profile.id
+            item.state = row.isOpen ? .on : .off
+            item.toolTip = "Option: close window · Option+Shift: remove"
+            menu.addItem(item)
+
+            let close = NSMenuItem(title: "Close \(row.profile.name) window", action: #selector(closeDesktop(_:)), keyEquivalent: "")
+            close.target = self
+            close.representedObject = row.profile.id
+            close.isAlternate = true
+            close.keyEquivalentModifierMask = [.option]
+            close.isEnabled = row.isOpen
+            menu.addItem(close)
+
+            let remove = NSMenuItem(title: "Remove \(row.profile.name)…", action: #selector(removeDesktop(_:)), keyEquivalent: "")
+            remove.target = self
+            remove.representedObject = row.profile.id
+            remove.isAlternate = true
+            remove.keyEquivalentModifierMask = [.option, .shift]
+            menu.addItem(remove)
+        }
+        let new = NSMenuItem(title: "New account window…", action: #selector(newDesktop), keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
+        if let err = desktop.error { _ = addText(err, .systemFont(ofSize: NSFont.systemFontSize), .labelColor, 0) }
+    }
+
+    private func desktopProfile(_ sender: NSMenuItem) -> ClaudeProfile? {
+        guard let id = sender.representedObject as? String else { return nil }
+        return desktop.rows.first { $0.profile.id == id }?.profile
+    }
+
+    @objc func openDesktop(_ sender: NSMenuItem) {
+        if let profile = desktopProfile(sender) { desktop.open(profile) }
+    }
+
+    @objc func closeDesktop(_ sender: NSMenuItem) {
+        if let profile = desktopProfile(sender) { desktop.close(profile) }
+    }
+
+    @objc func removeDesktop(_ sender: NSMenuItem) {
+        if let profile = desktopProfile(sender) { desktop.remove(profile) }
+    }
+
+    @objc func newDesktop() { desktop.createAndOpen() }
+
+    @objc func toggleShowDesktop() {
+        showDesktop.toggle()
+        rebuildMenu()
+        if desktopAvailable { desktop.refresh() }
+    }
+
+    @objc func toggleReopenAfterUpdates() {
+        reopenAfterUpdates.toggle()
+        rebuildMenu()
     }
 
     private func settingsMenu() -> NSMenu {
@@ -963,6 +1060,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cswapItem.state = useCswap ? .on : .off
         cswapItem.isEnabled = useCswap || cswapPath != nil
         menu.addItem(cswapItem)
+
+        if ClaudeApp.url != nil {
+            let desktopItem = NSMenuItem(title: "Claude desktop windows", action: #selector(toggleShowDesktop), keyEquivalent: "")
+            desktopItem.target = self
+            desktopItem.state = showDesktop ? .on : .off
+            menu.addItem(desktopItem)
+
+            let reopenItem = NSMenuItem(title: "Reopen windows after Claude updates", action: #selector(toggleReopenAfterUpdates), keyEquivalent: "")
+            reopenItem.target = self
+            reopenItem.state = reopenAfterUpdates ? .on : .off
+            reopenItem.isEnabled = showDesktop
+            menu.addItem(reopenItem)
+        }
 
         addShowItems(to: menu, title: "Menu bar", place: Self.barPlace)
         addShowItems(to: menu, title: "Dropdown", place: Self.dropdownPlace)
@@ -1047,6 +1157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         rebuildMenu()
     }
+}
+
+// Debug entry point: checks the Claude desktop pieces that don't need Claude running.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--claude-desktop-selftest" {
+    exit(runClaudeDesktopSelfTest(root: CommandLine.arguments[2]))
 }
 
 let app = NSApplication.shared
